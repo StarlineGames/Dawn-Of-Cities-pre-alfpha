@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dawn of Cities - Pre-alpha 7.11.26</title>
+<style>
+  body { font-family: sans-serif; background: #2b2b2b; color: white; text-align: center; margin: 0; }
+  #hud { padding: 8px; font-size: 18px; }
+  button { padding: 8px 12px; margin: 2px; font-size: 16px; }
+  button.activo { background: #f5c542; }
+  canvas { background: #7bb661; cursor: grab; max-width: 100%; touch-action: none; }
+  .nota { font-size: 14px; margin: 4px; }
+</style>
+</head>
+<body>
+  <h2>Dawn of Cities <small style="font-size:14px">Pre-alpha 7.11.26</small></h2>
+  <div id="hud"></div>
+  <div id="herramientas"></div>
+  <canvas id="mapa" width="640" height="448"></canvas>
+  <p class="nota">👆 Arrastra el mapa para moverte (o usa las flechas / WASD). Toca una casilla para construir.</p>
+  <p class="nota">⚠️ = edificio sin camino cerca (no produce)</p>
+  <p class="nota">🌉 Un camino sobre el agua se convierte en puente de madera.</p>
+  <p class="nota" id="mensaje">💾 Se guarda solo cada mes del juego.</p>
+
+<script>
+// ===== 1. CONFIGURACIÓN =====
+const TAM = 32;          // tamaño de cada casilla en píxeles
+const COLUMNAS = 60;     // el mapa ahora es mucho más grande
+const FILAS = 40;
+
+const EDIFICIOS = {
+  camino:  { nombre: "Camino",  emoji: "🟫", costo: 10 },
+  casa:    { nombre: "Casa",    emoji: "🏠", costo: 50 },
+  granja:  { nombre: "Granja",  emoji: "🌾", costo: 80 },
+  mercado: { nombre: "Mercado", emoji: "🏪", costo: 120 }
+};
+
+const REEMBOLSO = 0.5;   // al demoler te devuelven la mitad del costo
+
+// Aspecto de los caminos: sobre tierra y sobre agua (puente de madera)
+const COLOR_CAMINO = "#a07c4a";
+const GROSOR_CAMINO = 12;
+const COLOR_PUENTE = "#5e3a1a";   // madera oscura
+const GROSOR_PUENTE = 16;         // un poco más ancho que el camino
+
+// ===== 2. ESTADO DEL JUEGO =====
+const estado = {
+  dinero: 500,
+  poblacion: 0,
+  anio: 700,
+  mes: 1,
+  herramienta: "camino"   // puede ser un edificio o "demoler"
+};
+
+// Cámara: qué parte del mapa estamos viendo (en píxeles)
+const camara = { x: 12 * TAM, y: 8 * TAM };
+
+// Dos capas: el TERRENO (agua o nada) y el MAPA (lo que construimos encima).
+// Así un camino puede estar sobre el agua y se convierte en puente.
+const terreno = [];
+const mapa = [];
+for (let y = 0; y < FILAS; y++) {
+  terreno[y] = [];
+  mapa[y] = [];
+  for (let x = 0; x < COLUMNAS; x++) {
+    terreno[y][x] = null;
+    mapa[y][x] = null;
+  }
+}
+
+// El RÍO: baja de arriba a abajo haciendo curvas con una onda (seno)
+for (let y = 0; y < FILAS; y++) {
+  const centro = 22 + Math.round(3 * Math.sin(y / 4));
+  terreno[y][centro] = "agua";
+  terreno[y][centro + 1] = "agua";   // el río mide 2 casillas de ancho
+}
+
+// El LAGO: una elipse. Si la casilla cae dentro de la elipse, es agua
+for (let y = 0; y < FILAS; y++) {
+  for (let x = 0; x < COLUMNAS; x++) {
+    const dx = (x - 46) / 6;
+    const dy = (y - 12) / 4.5;
+    if (dx * dx + dy * dy <= 1) terreno[y][x] = "agua";
+  }
+}
+
+// ===== 3. SIMULACIÓN =====
+function esCamino(x, y) {
+  if (x < 0 || x >= COLUMNAS || y < 0 || y >= FILAS) return false;
+  return mapa[y][x] === "camino";
+}
+
+function tieneCamino(x, y) {
+  return esCamino(x, y - 1) || esCamino(x, y + 1) ||
+         esCamino(x - 1, y) || esCamino(x + 1, y);
+}
+
+function contarActivos(tipo) {
+  let total = 0;
+  for (let y = 0; y < FILAS; y++) {
+    for (let x = 0; x < COLUMNAS; x++) {
+      if (mapa[y][x] === tipo && tieneCamino(x, y)) total++;
+    }
+  }
+  return total;
+}
+
+function contarTodos(tipo) {
+  let total = 0;
+  for (let y = 0; y < FILAS; y++) {
+    for (let x = 0; x < COLUMNAS; x++) {
+      if (mapa[y][x] === tipo) total++;
+    }
+  }
+  return total;
+}
+
+function turno() {
+  const casas = contarActivos("casa");
+  const granjas = contarActivos("granja");
+  const mercados = contarActivos("mercado");
+  const caminos = contarTodos("camino");
+
+  estado.poblacion = casas * 4;
+
+  const ingresos = estado.poblacion * 1 + granjas * 5 + mercados * 8;
+  const edificiosTotales = contarTodos("casa") + contarTodos("granja") + contarTodos("mercado");
+  const gastos = edificiosTotales * 2 + caminos * 1;
+  estado.dinero += ingresos - gastos;
+
+  estado.mes++;
+  if (estado.mes > 12) {
+    estado.mes = 1;
+    estado.anio++;
+  }
+  guardar(true);   // autoguardado silencioso cada mes del juego
+  dibujar();
+}
+
+// ===== 4. VISUAL =====
+const canvas = document.getElementById("mapa");
+const ctx = canvas.getContext("2d");
+
+function dibujarCamino(x, y) {
+  const cx = x * TAM + TAM / 2;
+  const cy = y * TAM + TAM / 2;
+
+  // Si debajo hay agua, es un puente: otro color y más grueso
+  const esPuente = terreno[y][x] === "agua";
+  const color = esPuente ? COLOR_PUENTE : COLOR_CAMINO;
+  const grosor = esPuente ? GROSOR_PUENTE : GROSOR_CAMINO;
+
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = grosor;
+  ctx.lineCap = "butt";
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, grosor / 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (esCamino(x, y - 1)) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - TAM / 2); ctx.stroke(); }
+  if (esCamino(x, y + 1)) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy + TAM / 2); ctx.stroke(); }
+  if (esCamino(x - 1, y)) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx - TAM / 2, cy); ctx.stroke(); }
+  if (esCamino(x + 1, y)) { ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + TAM / 2, cy); ctx.stroke(); }
+}
+
+// Evita que la cámara se salga del mapa
+function limitarCamara() {
+  const maxX = COLUMNAS * TAM - canvas.width;
+  const maxY = FILAS * TAM - canvas.height;
+  camara.x = Math.max(0, Math.min(camara.x, maxX));
+  camara.y = Math.max(0, Math.min(camara.y, maxY));
+}
+
+function dibujar() {
+  limitarCamara();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.save();
+  ctx.translate(-camara.x, -camara.y);   // movemos "el mundo" según la cámara
+
+  // Solo dibujamos las casillas que se ven en pantalla (más rápido)
+  const x0 = Math.max(0, Math.floor(camara.x / TAM));
+  const x1 = Math.min(COLUMNAS - 1, Math.ceil((camara.x + canvas.width) / TAM));
+  const y0 = Math.max(0, Math.floor(camara.y / TAM));
+  const y1 = Math.min(FILAS - 1, Math.ceil((camara.y + canvas.height) / TAM));
+
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      const celda = mapa[y][x];
+
+      if (terreno[y][x] === "agua") {
+        ctx.fillStyle = "#4a90d9";
+        ctx.fillRect(x * TAM, y * TAM, TAM, TAM);
+      }
+
+      ctx.strokeStyle = "rgba(0,0,0,0.15)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x * TAM, y * TAM, TAM, TAM);
+
+      if (celda === "camino") {
+        dibujarCamino(x, y);
+      } else if (celda) {
+        const conCamino = tieneCamino(x, y);
+        ctx.globalAlpha = conCamino ? 1 : 0.5;
+        ctx.font = "24px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(EDIFICIOS[celda].emoji, x * TAM + TAM / 2, y * TAM + TAM / 2);
+        ctx.globalAlpha = 1;
+
+        if (!conCamino) {
+          ctx.font = "12px serif";
+          ctx.fillText("⚠️", x * TAM + TAM - 8, y * TAM + 8);
+        }
+      }
+    }
+  }
+
+  ctx.restore();   // volvemos al sistema normal de coordenadas
+
+  document.getElementById("hud").textContent =
+    "📅 Año " + estado.anio + " (mes " + estado.mes + ")   💰 " +
+    estado.dinero + "   👥 " + estado.poblacion;
+}
+
+// ===== 5. CONTROLES =====
+const contenedor = document.getElementById("herramientas");
+
+for (const id in EDIFICIOS) {
+  const e = EDIFICIOS[id];
+  const boton = document.createElement("button");
+  boton.textContent = e.emoji + " " + e.nombre + " ($" + e.costo + ")";
+  boton.onclick = function () {
+    estado.herramienta = id;
+    actualizarBotones();
+  };
+  boton.id = "btn-" + id;
+  contenedor.appendChild(boton);
+}
+
+// Botón de demoler
+const botonDemoler = document.createElement("button");
+botonDemoler.textContent = "🔨 Demoler";
+botonDemoler.id = "btn-demoler";
+botonDemoler.onclick = function () {
+  estado.herramienta = "demoler";
+  actualizarBotones();
+};
+contenedor.appendChild(botonDemoler);
+
+function actualizarBotones() {
+  const ids = Object.keys(EDIFICIOS).concat(["demoler"]);
+  for (const id of ids) {
+    document.getElementById("btn-" + id).className =
+      (id === estado.herramienta) ? "activo" : "";
+  }
+}
+
+// Acción al tocar una casilla (construir o demoler)
+function accionEnCasilla(x, y) {
+  if (x < 0 || x >= COLUMNAS || y < 0 || y >= FILAS) return;
+  const celda = mapa[y][x];
+
+  if (estado.herramienta === "demoler") {
+    if (celda === null) return;   // nada que demoler (el agua no se demuele)
+    estado.dinero += Math.floor(EDIFICIOS[celda].costo * REEMBOLSO);
+    mapa[y][x] = null;
+    dibujar();
+    return;
+  }
+
+  if (celda !== null) return;                          // casilla ocupada
+  // Sobre el agua solo se permite el camino, que se convierte en puente
+  if (terreno[y][x] === "agua" && estado.herramienta !== "camino") return;
+  const edificio = EDIFICIOS[estado.herramienta];
+  if (estado.dinero < edificio.costo) return;
+
+  estado.dinero -= edificio.costo;
+  mapa[y][x] = estado.herramienta;
+  dibujar();
+}
+
+// Arrastrar para mover la cámara. Si el dedo casi no se mueve, es un toque.
+let arrastrando = false;
+let movio = false;
+let inicio = { x: 0, y: 0, camX: 0, camY: 0 };
+
+canvas.addEventListener("pointerdown", function (e) {
+  arrastrando = true;
+  movio = false;
+  inicio = { x: e.clientX, y: e.clientY, camX: camara.x, camY: camara.y };
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener("pointermove", function (e) {
+  if (!arrastrando) return;
+  const dx = e.clientX - inicio.x;
+  const dy = e.clientY - inicio.y;
+  if (Math.abs(dx) + Math.abs(dy) > 8) movio = true;   // ya es un arrastre
+
+  if (movio) {
+    const escala = canvas.width / canvas.getBoundingClientRect().width;
+    camara.x = inicio.camX - dx * escala;
+    camara.y = inicio.camY - dy * escala;
+    dibujar();
+  }
+});
+
+canvas.addEventListener("pointerup", function (e) {
+  if (!arrastrando) return;
+  arrastrando = false;
+  if (movio) return;   // fue un arrastre, no construimos
+
+  const rect = canvas.getBoundingClientRect();
+  const escala = canvas.width / rect.width;
+  const mundoX = (e.clientX - rect.left) * escala + camara.x;   // posición en el mapa completo
+  const mundoY = (e.clientY - rect.top) * escala + camara.y;
+  accionEnCasilla(Math.floor(mundoX / TAM), Math.floor(mundoY / TAM));
+});
+
+// Mover con teclado (para PC)
+window.addEventListener("keydown", function (e) {
+  const paso = TAM * 2;
+  const k = e.key.toLowerCase();
+  if (k === "arrowleft" || k === "a") camara.x -= paso;
+  else if (k === "arrowright" || k === "d") camara.x += paso;
+  else if (k === "arrowup" || k === "w") camara.y -= paso;
+  else if (k === "arrowdown" || k === "s") camara.y += paso;
+  else return;
+  e.preventDefault();
+  dibujar();
+});
+
+// ===== 6. GUARDADO =====
+// Se guarda en el navegador del jugador (localStorage), como texto.
+// El terreno (río y lago) no se guarda porque se genera igual cada vez.
+const CLAVE_GUARDADO = "dawn-of-cities-partida";
+const VERSION_GUARDADO = 1;   // súbela si cambias la forma de los datos guardados
+let borrando = false;         // evita que el autoguardado reviva una partida borrada
+
+function mostrarMensaje(texto) {
+  document.getElementById("mensaje").textContent = texto;
+}
+
+function guardar(silencioso) {
+  if (borrando) return;
+  try {
+    const datos = { version: VERSION_GUARDADO, estado: estado, mapa: mapa, camara: camara };
+    localStorage.setItem(CLAVE_GUARDADO, JSON.stringify(datos));
+    if (!silencioso) mostrarMensaje("💾 Partida guardada");
+  } catch (e) {
+    mostrarMensaje("⚠️ No se pudo guardar (¿modo incógnito o almacenamiento bloqueado?)");
+  }
+}
+
+function cargar() {
+  try {
+    const texto = localStorage.getItem(CLAVE_GUARDADO);
+    if (!texto) return;   // no hay partida guardada
+
+    const datos = JSON.parse(texto);
+    if (datos.version !== VERSION_GUARDADO) {
+      mostrarMensaje("⚠️ El guardado es de una versión anterior. Empezamos partida nueva.");
+      return;
+    }
+
+    // Primero revisamos todo el mapa en una copia; solo si está bien, lo usamos
+    if (!Array.isArray(datos.mapa) || datos.mapa.length !== FILAS) return;
+    const nuevoMapa = [];
+    for (let y = 0; y < FILAS; y++) {
+      if (!Array.isArray(datos.mapa[y]) || datos.mapa[y].length !== COLUMNAS) return;
+      nuevoMapa[y] = [];
+      for (let x = 0; x < COLUMNAS; x++) {
+        const c = datos.mapa[y][x];
+        nuevoMapa[y][x] = EDIFICIOS.hasOwnProperty(c) ? c : null;   // lo desconocido se ignora
+      }
+    }
+    for (let y = 0; y < FILAS; y++) mapa[y] = nuevoMapa[y];
+
+    // Números del estado (solo si de verdad son números)
+    const e = datos.estado || {};
+    for (const campo of ["dinero", "poblacion", "anio", "mes"]) {
+      if (typeof e[campo] === "number") estado[campo] = e[campo];
+    }
+    if (e.herramienta === "demoler" || EDIFICIOS.hasOwnProperty(e.herramienta)) {
+      estado.herramienta = e.herramienta;
+    }
+    if (datos.camara && typeof datos.camara.x === "number" && typeof datos.camara.y === "number") {
+      camara.x = datos.camara.x;
+      camara.y = datos.camara.y;
+    }
+    mostrarMensaje("📂 Partida cargada");
+  } catch (e) {
+    mostrarMensaje("⚠️ No se pudo cargar la partida guardada.");
+  }
+}
+
+// Botones de guardado
+const botonGuardar = document.createElement("button");
+botonGuardar.textContent = "💾 Guardar";
+botonGuardar.onclick = function () { guardar(false); };
+contenedor.appendChild(botonGuardar);
+
+const botonNueva = document.createElement("button");
+botonNueva.textContent = "🗑️ Nueva partida";
+botonNueva.onclick = function () {
+  if (!confirm("¿Borrar la partida guardada y empezar de nuevo?")) return;
+  borrando = true;
+  try { localStorage.removeItem(CLAVE_GUARDADO); } catch (e) {}
+  location.reload();
+};
+contenedor.appendChild(botonNueva);
+
+// En celular el navegador puede cerrar la pestaña sin avisar: guardamos al salir
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "hidden") guardar(true);
+});
+window.addEventListener("pagehide", function () { guardar(true); });
+
+// ===== 7. INICIO =====
+cargar();
+actualizarBotones();
+dibujar();
+setInterval(turno, 1500);
+</script>
+</body>
+</html>
