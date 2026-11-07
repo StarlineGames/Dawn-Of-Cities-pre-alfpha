@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Dawn of Cities</title>
+<style>
+  body { font-family: sans-serif; background: #2b2b2b; color: white; text-align: center; margin: 0; }
+  #hud { padding: 8px; font-size: 18px; }
+  button { padding: 8px 12px; margin: 2px; font-size: 16px; }
+  button.activo { background: #f5c542; }
+  canvas { background: #7bb661; cursor: pointer; max-width: 100%; }
+</style>
+</head>
+<body>
+  <h2>Dawn of Cities</h2>
+  <div id="hud"></div>
+  <div id="herramientas"></div>
+  <canvas id="mapa" width="640" height="448"></canvas>
+
+<script>
+// ===== 1. CONFIGURACIÓN =====
+const TAM = 32;        // tamaño de cada casilla en píxeles
+const COLUMNAS = 20;
+const FILAS = 14;
+
+const EDIFICIOS = {
+  casa:    { nombre: "Casa",    emoji: "🏠", costo: 50 },
+  granja:  { nombre: "Granja",  emoji: "🌾", costo: 80 },
+  mercado: { nombre: "Mercado", emoji: "🏪", costo: 120 }
+};
+
+// ===== 2. ESTADO DEL JUEGO (los datos) =====
+const estado = {
+  dinero: 500,
+  poblacion: 0,
+  anio: 700,
+  mes: 1,
+  herramienta: "casa"
+};
+
+// El mapa es una tabla (filas y columnas). Cada casilla guarda: null, "agua" o un edificio
+const mapa = [];
+for (let y = 0; y < FILAS; y++) {
+  mapa[y] = [];
+  for (let x = 0; x < COLUMNAS; x++) {
+    mapa[y][x] = null;
+  }
+}
+// Un lago ficticio
+for (let y = 3; y <= 7; y++) {
+  for (let x = 14; x <= 17; x++) {
+    mapa[y][x] = "agua";
+  }
+}
+
+// ===== 3. SIMULACIÓN (las reglas) =====
+function contar(tipo) {
+  let total = 0;
+  for (let y = 0; y < FILAS; y++) {
+    for (let x = 0; x < COLUMNAS; x++) {
+      if (mapa[y][x] === tipo) total++;
+    }
+  }
+  return total;
+}
+
+function turno() {
+  const casas = contar("casa");
+  const granjas = contar("granja");
+  const mercados = contar("mercado");
+
+  estado.poblacion = casas * 4;
+
+  const ingresos = estado.poblacion * 1 + granjas * 5 + mercados * 8;
+  const gastos = (casas + granjas + mercados) * 2;
+  estado.dinero += ingresos - gastos;
+
+  estado.mes++;
+  if (estado.mes > 12) {
+    estado.mes = 1;
+    estado.anio++;
+  }
+  dibujar();
+}
+
+// ===== 4. VISUAL =====
+const canvas = document.getElementById("mapa");
+const ctx = canvas.getContext("2d");
+
+function dibujar() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let y = 0; y < FILAS; y++) {
+    for (let x = 0; x < COLUMNAS; x++) {
+      const celda = mapa[y][x];
+
+      if (celda === "agua") {
+        ctx.fillStyle = "#4a90d9";
+        ctx.fillRect(x * TAM, y * TAM, TAM, TAM);
+      }
+
+      ctx.strokeStyle = "rgba(0,0,0,0.15)";
+      ctx.strokeRect(x * TAM, y * TAM, TAM, TAM);
+
+      if (celda && celda !== "agua") {
+        ctx.font = "24px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(EDIFICIOS[celda].emoji, x * TAM + TAM / 2, y * TAM + TAM / 2);
+      }
+    }
+  }
+
+  document.getElementById("hud").textContent =
+    "📅 Año " + estado.anio + " (mes " + estado.mes + ")   💰 " +
+    estado.dinero + "   👥 " + estado.poblacion;
+}
+
+// ===== 5. CONTROLES =====
+const contenedor = document.getElementById("herramientas");
+for (const id in EDIFICIOS) {
+  const e = EDIFICIOS[id];
+  const boton = document.createElement("button");
+  boton.textContent = e.emoji + " " + e.nombre + " ($" + e.costo + ")";
+  boton.onclick = function () {
+    estado.herramienta = id;
+    actualizarBotones();
+  };
+  boton.id = "btn-" + id;
+  contenedor.appendChild(boton);
+}
+
+function actualizarBotones() {
+  for (const id in EDIFICIOS) {
+    document.getElementById("btn-" + id).className =
+      (id === estado.herramienta) ? "activo" : "";
+  }
+}
+
+canvas.addEventListener("pointerdown", function (evento) {
+  const rect = canvas.getBoundingClientRect();
+  const escala = canvas.width / rect.width;
+  const x = Math.floor((evento.clientX - rect.left) * escala / TAM);
+  const y = Math.floor((evento.clientY - rect.top) * escala / TAM);
+
+  if (mapa[y][x] !== null) return;                 // casilla ocupada
+  const edificio = EDIFICIOS[estado.herramienta];
+  if (estado.dinero < edificio.costo) return;      // no alcanza el dinero
+
+  estado.dinero -= edificio.costo;
+  mapa[y][x] = estado.herramienta;
+  dibujar();
+});
+
+// ===== 6. INICIO =====
+actualizarBotones();
+dibujar();
+setInterval(turno, 1500);   // cada 1.5 segundos pasa un mes
+</script>
+</body>
+</html>
