@@ -21,6 +21,7 @@
   <p class="nota">👆 Arrastra el mapa para moverte (o usa las flechas / WASD). Toca una casilla para construir.</p>
   <p class="nota">⚠️ = edificio sin camino cerca (no produce)</p>
   <p class="nota">🌉 Un camino sobre el agua se convierte en puente de madera.</p>
+  <p class="nota" id="mensaje">💾 Se guarda solo cada mes del juego.</p>
 
 <script>
 // ===== 1. CONFIGURACIÓN =====
@@ -133,6 +134,7 @@ function turno() {
     estado.mes = 1;
     estado.anio++;
   }
+  guardar(true);   // autoguardado silencioso cada mes del juego
   dibujar();
 }
 
@@ -332,10 +334,97 @@ window.addEventListener("keydown", function (e) {
   dibujar();
 });
 
-// ===== 6. INICIO =====
+// ===== 6. GUARDADO =====
+// Se guarda en el navegador del jugador (localStorage), como texto.
+// El terreno (río y lago) no se guarda porque se genera igual cada vez.
+const CLAVE_GUARDADO = "dawn-of-cities-partida";
+const VERSION_GUARDADO = 1;   // súbela si cambias la forma de los datos guardados
+let borrando = false;         // evita que el autoguardado reviva una partida borrada
+
+function mostrarMensaje(texto) {
+  document.getElementById("mensaje").textContent = texto;
+}
+
+function guardar(silencioso) {
+  if (borrando) return;
+  try {
+    const datos = { version: VERSION_GUARDADO, estado: estado, mapa: mapa, camara: camara };
+    localStorage.setItem(CLAVE_GUARDADO, JSON.stringify(datos));
+    if (!silencioso) mostrarMensaje("💾 Partida guardada");
+  } catch (e) {
+    mostrarMensaje("⚠️ No se pudo guardar (¿modo incógnito o almacenamiento bloqueado?)");
+  }
+}
+
+function cargar() {
+  try {
+    const texto = localStorage.getItem(CLAVE_GUARDADO);
+    if (!texto) return;   // no hay partida guardada
+
+    const datos = JSON.parse(texto);
+    if (datos.version !== VERSION_GUARDADO) {
+      mostrarMensaje("⚠️ El guardado es de una versión anterior. Empezamos partida nueva.");
+      return;
+    }
+
+    // Primero revisamos todo el mapa en una copia; solo si está bien, lo usamos
+    if (!Array.isArray(datos.mapa) || datos.mapa.length !== FILAS) return;
+    const nuevoMapa = [];
+    for (let y = 0; y < FILAS; y++) {
+      if (!Array.isArray(datos.mapa[y]) || datos.mapa[y].length !== COLUMNAS) return;
+      nuevoMapa[y] = [];
+      for (let x = 0; x < COLUMNAS; x++) {
+        const c = datos.mapa[y][x];
+        nuevoMapa[y][x] = EDIFICIOS.hasOwnProperty(c) ? c : null;   // lo desconocido se ignora
+      }
+    }
+    for (let y = 0; y < FILAS; y++) mapa[y] = nuevoMapa[y];
+
+    // Números del estado (solo si de verdad son números)
+    const e = datos.estado || {};
+    for (const campo of ["dinero", "poblacion", "anio", "mes"]) {
+      if (typeof e[campo] === "number") estado[campo] = e[campo];
+    }
+    if (e.herramienta === "demoler" || EDIFICIOS.hasOwnProperty(e.herramienta)) {
+      estado.herramienta = e.herramienta;
+    }
+    if (datos.camara && typeof datos.camara.x === "number" && typeof datos.camara.y === "number") {
+      camara.x = datos.camara.x;
+      camara.y = datos.camara.y;
+    }
+    mostrarMensaje("📂 Partida cargada");
+  } catch (e) {
+    mostrarMensaje("⚠️ No se pudo cargar la partida guardada.");
+  }
+}
+
+// Botones de guardado
+const botonGuardar = document.createElement("button");
+botonGuardar.textContent = "💾 Guardar";
+botonGuardar.onclick = function () { guardar(false); };
+contenedor.appendChild(botonGuardar);
+
+const botonNueva = document.createElement("button");
+botonNueva.textContent = "🗑️ Nueva partida";
+botonNueva.onclick = function () {
+  if (!confirm("¿Borrar la partida guardada y empezar de nuevo?")) return;
+  borrando = true;
+  try { localStorage.removeItem(CLAVE_GUARDADO); } catch (e) {}
+  location.reload();
+};
+contenedor.appendChild(botonNueva);
+
+// En celular el navegador puede cerrar la pestaña sin avisar: guardamos al salir
+document.addEventListener("visibilitychange", function () {
+  if (document.visibilityState === "hidden") guardar(true);
+});
+window.addEventListener("pagehide", function () { guardar(true); });
+
+// ===== 7. INICIO =====
+cargar();
 actualizarBotones();
 dibujar();
 setInterval(turno, 1500);
 </script>
 </body>
-  </html>
+</html>
