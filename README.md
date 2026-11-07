@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.jpg" width="300" alt="Dawn of Cities">
+  <img src="1794014849753.jpg" width="300" alt="Dawn of Cities">
 </p>
 
 # Dawn of Cities
