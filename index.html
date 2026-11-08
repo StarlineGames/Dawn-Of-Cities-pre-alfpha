@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dawn Of Cities - Pre-alpha 8.11.26</title>
+<style>
+  body { font-family: sans-serif; background: #2b2b2b; color: white; text-align: center; margin: 0; }
+  #hud { padding: 8px; font-size: 16px; }
+  button { padding: 8px 12px; margin: 2px; font-size: 16px; }
+  button.activo { background: #f5c542; }
+  canvas { background: #7bb661; cursor: grab; max-width: 100%; touch-action: none; }
+  .nota { font-size: 14px; margin: 4px; }
+  #barra { background: #1f1f1f; padding: 6px; margin: 0 auto; max-width: 640px; }
+  .pestanas, .items { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
+  .pestanas button { font-size: 14px; padding: 8px 10px; margin: 0; }
+  .items { margin-top: 6px; }
+  .items button.item { display: flex; flex-direction: column; align-items: center; min-width: 92px; padding: 6px 8px; margin: 0; }
+  .items .emo { font-size: 26px; line-height: 1.1; }
+  .items .nom { font-size: 14px; }
+  .items .cos { font-size: 12px; }
+  .pista { font-size: 14px; padding: 8px; margin: 0; }
+  #tiempo { margin-bottom: 4px; }
+  #tiempo button { padding: 6px 14px; }
+
+  /* Capas: menú, economía y periódico se abren encima del juego */
+  .capa { display: none; position: fixed; inset: 0; z-index: 10; align-items: center; justify-content: center;
+          background: rgba(10, 15, 25, 0.94); padding: 12px; overflow: auto; }
+  .tarjeta { background: #1f2a3a; border: 2px solid #f5c542; border-radius: 10px; padding: 16px;
+             max-width: 420px; width: 100%; text-align: left; box-sizing: border-box; }
+  .tarjeta h2, .tarjeta h3 { margin: 8px 0 4px; }
+  .tarjeta.centro { text-align: center; }
+  .tarjeta .logo { max-width: 60%; border-radius: 8px; }
+  .tarjeta .version { margin: 0 0 12px; opacity: 0.8; }
+  button.grande { display: block; width: 100%; font-size: 18px; padding: 12px; margin: 8px 0; }
+  button:disabled { opacity: 0.4; }
+  .impuesto { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 20px; }
+  .barra-fel { background: #444; height: 10px; border-radius: 5px; overflow: hidden; }
+  .barra-fel div { background: #f5c542; height: 100%; }
+  .tarjeta table { width: 100%; border-collapse: collapse; }
+  .tarjeta td { padding: 3px 0; }
+  .tarjeta td:last-child { text-align: right; }
+  .tarjeta tr.total td { border-top: 1px solid #555; font-weight: bold; }
+  .tarjeta tr.bien td:last-child { color: #7bdc7b; }
+  .tarjeta tr.mal td:last-child { color: #ff7b7b; }
+  .papel { background: #f1e7c8; color: #2b2b2b; border-color: #8b5a2b; font-family: Georgia, serif; }
+  .papel .cabecera { text-align: center; font-size: 26px; font-weight: bold; letter-spacing: 3px; border-bottom: 3px double #2b2b2b; padding-bottom: 6px; }
+  .papel .fecha { text-align: center; font-size: 14px; margin: 4px 0 8px; font-style: italic; }
+  .papel .titular { font-size: 22px; line-height: 1.2; margin: 6px 0 10px; }
+  .papel ul { padding-left: 18px; margin: 0 0 12px; }
+  .papel li { margin-bottom: 6px; }
+</style>
+</head>
+<body>
+  <h2>Dawn Of Cities <small style="font-size:14px">Pre-alpha 8.11.26</small></h2>
+  <div id="hud"></div>
+  <div id="tiempo"></div>
+  <div id="herramientas"></div>
+  <canvas id="mapa" width="640" height="448"></canvas>
+  <div id="barra"></div>
+  <p class="nota" id="mensaje">💾 Se guarda solo cada mes del juego.</p>
+  <p class="nota">👆 Arrastra el mapa para moverte (o usa las flechas / WASD). Toca una casilla para construir.</p>
+  <p class="nota">🌲 Bosque: ahí va el Aserradero · ⛰️ Montaña: ahí va la Cantera · 🌊 Agua: solo puentes · ⚠️ = sin camino cerca (no produce)</p>
+
+  <div id="menu" class="capa" style="display:flex">
+    <div class="tarjeta centro">
+      <img src="logo.jpg" alt="Dawn Of Cities" class="logo" onerror="this.style.display='none'">
+      <h1>Dawn Of Cities</h1>
+      <p class="version">Pre-alpha 8.11.26</p>
+      <button class="grande" onclick="menuNueva()">🆕 Nueva partida</button>
+      <button class="grande" id="btn-continuar" onclick="menuContinuar()">▶️ Continuar</button>
+      <p id="menu-aviso" class="nota"></p>
+    </div>
+  </div>
+
+  <div id="panel-economia" class="capa">
+    <div class="tarjeta">
+      <h2>🪙 Economía</h2>
+      <div id="econ-contenido"></div>
+      <button class="grande" onclick="cerrarCapa('panel-economia')">Cerrar</button>
+    </div>
+  </div>
+
+  <div id="periodico" class="capa">
+    <div class="tarjeta papel">
+      <div id="periodico-contenido"></div>
+      <button class="grande" onclick="cerrarCapa('periodico')">Cerrar</button>
+    </div>
+  </div>
+
+  <script src="datos.js?v=2"></script>
+  <script src="noticias.js?v=1"></script>
+  <script src="mundo.js?v=2"></script>
+  <script src="simulacion.js?v=2"></script>
+  <script src="interfaz.js?v=2"></script>
+  <script src="guardado.js?v=2"></script>
+  <script src="paneles.js?v=1"></script>
+  <script src="juego.js?v=2"></script>
+</body>
+</html>
